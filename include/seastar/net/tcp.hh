@@ -531,16 +531,24 @@ private:
             // Can not send more than advertised window allows or unsent data size
             auto x = std::min(_snd.window - window_used, _snd.unsent_len);
 
-            // Can not send more than congestion window allows
-            if (window_used > _snd.cwnd) {
+            // Can not send more than congestion window allows. During
+            // Limited Transmit, RFC5681 permits sending up to cwnd + 2 * SMSS
+            // before the third duplicate ACK, subject to the flight_size() check
+            // below. Use that allowance for the congestion-window cap so a full
+            // cwnd does not prevent the Limited Transmit branch from sending.
+            auto congestion_window = _snd.cwnd;
+            if (_snd.dupacks == 1 || _snd.dupacks == 2) {
+                congestion_window += 2 * _snd.mss;
+            }
+            if (window_used > congestion_window) {
                 return 0;
             }
-            x = std::min(_snd.cwnd - window_used, x);
+            x = std::min(congestion_window - window_used, x);
             if (_snd.dupacks == 1 || _snd.dupacks == 2) {
                 // RFC5681 Step 3.1
                 // Send cwnd + 2 * smss per RFC3042
                 auto flight = flight_size();
-                auto max = _snd.cwnd + 2 * _snd.mss;
+                auto max = congestion_window;
                 x = flight <= max ? std::min(x, max - flight) : 0;
                 _snd.limited_transfer += x;
             } else if (_snd.dupacks >= 3) {
